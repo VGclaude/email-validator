@@ -93,7 +93,7 @@
 <main>
   <header>
     <h1>Address Check</h1>
-    <p class="lede">Paste an email address and see right away whether it can be real. Paste several at once, one per line, and each gets its own result.</p>
+    <p class="lede">Paste an email address to check its format and whether its domain can receive email. It cannot tell if the exact mailbox exists. Paste several at once, one per line.</p>
   </header>
 
   <div class="input-wrap">
@@ -225,7 +225,7 @@ function validateEmail(raw) {
   if (ROLES.has(local.toLowerCase())) { add("warn", "“" + local + "” is a shared role address, not a person. Often unmonitored."); warns++; }
 
   if (warns) { res.verdict = "warn"; res.headline = "Valid format, but check the warnings."; }
-  else { res.verdict = "valid"; res.headline = "Looks real."; }
+  else { res.verdict = "valid"; res.headline = "Format is valid."; }
   return res;
 }
 
@@ -290,7 +290,7 @@ function applyDns(res, dns) {
     const prov = providerOf(dns.hosts);
     const shown = dns.hosts.slice(0, 3).join(", ") + (dns.hosts.length > 3 ? " and " + (dns.hosts.length - 3) + " more" : "");
     add("pass", "Mail servers found" + (prov ? " (" + prov + ")" : "") + ": " + shown + ".");
-    if (r.verdict === "valid") r.headline = "Looks real. The domain accepts email.";
+    if (r.verdict === "valid") r.headline = "The domain is real and accepts email. This exact mailbox cannot be confirmed.";
   }
   else if (dns.state === "a") {
     add("warn", "No mail servers are listed. Mail would go to the website's own server, which rarely accepts it.");
@@ -306,7 +306,7 @@ function applyDns(res, dns) {
   const $in = document.getElementById("in");
   const $res = document.getElementById("results");
   const $count = document.getElementById("count");
-  const LABEL = { valid: "Looks real", warn: "Check warnings", invalid: "Not real", pending: "Checking\u2026" };
+  const LABEL = { valid: "Domain OK", warn: "Check warnings", invalid: "Not real", pending: "Checking\u2026" };
   const cache = new Map();
   const timers = new Map();
   const MAX_ITEMS = 50;
@@ -327,7 +327,7 @@ function applyDns(res, dns) {
     });
     const n = results.filter(r => r.verdict === "valid").length;
     const waiting = results.some(r => r.verdict === "pending");
-    $count.textContent = items.length === 1 ? "" : (waiting ? "Checking\u2026 " : "") + n + " of " + items.length + " look real";
+    $count.textContent = items.length === 1 ? "" : (waiting ? "Checking\u2026 " : "") + n + " of " + items.length + " have a working domain";
     for (const r of results) {
       const card = el("div", "card");
       const head = el("div", "head");
