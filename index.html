@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Address Check</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one narrow column. Paste box on top, one result card per address below, a plain note about limits at the end. */
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --fg: #14202e;
+    --muted: #5b6b7d;
+    --line: #d9e0e8;
+    --accent: #1f5fd1;
+    --ok: #12724a;
+    --ok-bg: #e0f3ea;
+    --warn: #8a5a00;
+    --warn-bg: #fbefd2;
+    --bad: #b3261e;
+    --bad-bg: #fbe4e1;
+    --font-body: "Familjen Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e151d; --surface: #16202b; --fg: #e6edf5; --muted: #93a3b5; --line: #2a3745;
+      --accent: #6ea2ff; --ok: #5fd39b; --ok-bg: #12301f; --warn: #f0be5b; --warn-bg: #36290b;
+      --bad: #ff8d84; --bad-bg: #3a1613; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e151d; --surface: #16202b; --fg: #e6edf5; --muted: #93a3b5; --line: #2a3745;
+    --accent: #6ea2ff; --ok: #5fd39b; --ok-bg: #12301f; --warn: #f0be5b; --warn-bg: #36290b;
+    --bad: #ff8d84; --bad-bg: #3a1613; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  h1 { font-size: clamp(30px, 6vw, 40px); line-height: 1.1; margin: 0; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
+  .lede { margin: 8px 0 0; color: var(--muted); max-width: 56ch; }
+  .input-wrap { display: flex; flex-direction: column; gap: 8px; }
+  label { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 112px; resize: vertical; padding: 14px 16px; border-radius: 10px;
+    border: 1.5px solid var(--line); background: var(--surface); color: var(--fg);
+    font-family: var(--font-mono); font-size: 15px; line-height: 1.6;
+  }
+  textarea:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+  }
+  button:hover { border-color: var(--accent); }
+  .count { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #results { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+  .addr { font-family: var(--font-mono); font-size: 15px; overflow-wrap: anywhere; min-width: 0; }
+  .addr .at { color: var(--muted); }
+  .addr .dom { color: var(--accent); }
+  .pill { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .pill.valid { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.invalid { background: var(--bad-bg); color: var(--bad); }
+  .headline { margin: 0; font-weight: 500; }
+  ul.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  ul.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 14px; min-width: 0; }
+  ul.checks .ic { font-family: var(--font-mono); font-weight: 600; text-align: center; }
+  ul.checks .pass .ic { color: var(--ok); }
+  ul.checks .warn .ic { color: var(--warn); }
+  ul.checks .fail .ic { color: var(--bad); }
+  ul.checks .pending .ic { color: var(--muted); }
+  ul.checks .pending { color: var(--muted); }
+  .pill.pending { background: var(--line); color: var(--muted); }
+  .suggest { font-size: 14px; }
+  .suggest button { font-family: var(--font-mono); font-size: 13px; margin-left: 4px; }
+  .note { font-size: 14px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; max-width: 62ch; }
+  .note strong { color: var(--fg); }
+  @media (prefers-reduced-motion: no-preference) { .card { animation: rise .18s ease-out; } @keyframes rise { from { opacity: .0; transform: translateY(4px);} to { opacity: 1; transform: none; } } }
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <h1>Address Check</h1>
+    <p class="lede">Paste an email address and see right away whether it can be real. Paste several at once, one per line, and each gets its own result.</p>
+  </header>
+
+  <div class="input-wrap">
+    <label for="in">Email address</label>
+    <textarea id="in" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="name@example.com">maria.lopez@gmail.com
+john.smith@gmial.com
+deals@mailinator.com</textarea>
+    <div class="row">
+      <button type="button" id="clear">Clear</button>
+      <span class="count" id="count" aria-live="polite"></span>
+      <span class="spacer"></span>
+      <span class="count">The three above are examples. Paste over them.</span>
+    </div>
+  </div>
+
+  <section id="results" aria-live="polite"></section>
+
+  <p class="note"><strong>What this checks.</strong> Spelling rules from the email standard, common typos of big providers, throwaway-inbox services, Gmail's own username rules, and whether the domain exists and has mail servers. <strong>What it cannot check.</strong> Whether that particular mailbox exists, or whether the domain accepts every address (a catch-all). That needs a direct connection to the mail server, which a web page cannot make. Only the domain name, never the part before the @, is sent to Cloudflare's public DNS to look up mail servers.</p>
+</main>
+
+<script id="logic">
+const CCTLD = new Set(("ac ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo br bs bt bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg er es et eu fi fj fk fm fo fr ga gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st su sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug uk us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw").split(" "));
+const GTLD = new Set(("com net org edu gov mil int info biz name pro mobi asia tel travel jobs museum coop aero cat app dev ai online site tech store shop blog cloud email xyz club live news world today space website link page art design studio agency digital network solutions systems services group media global life love fun bio health care money bank finance capital ventures company inc llc ltd team works zone center city academy education school university college software tools expert guru ninja rocks band wiki games game video photo photos pics music radio church press report review reviews social chat community forum events party fund law legal tax work jobs careers support help host hosting domains website pizza coffee restaurant bar cafe hotel flights vacations travel fit fitness yoga run golf fish farm garden house homes land realty properties estate auction cars car bike auto taxi tours guide directory market marketplace express delivery supply parts industries international holdings partners foundation charity ngo ong gmbh").split(" "));
+
+const RESERVED = new Set(["example.com","example.org","example.net","localhost"]);
+const RESERVED_TLD = ["test","invalid","local","localhost","example","internal","lan","home"];
+
+const DISPOSABLE = new Set(["mailinator.com","guerrillamail.com","guerrillamail.net","guerrillamail.org","sharklasers.com","10minutemail.com","10minutemail.net","tempmail.com","temp-mail.org","tempmail.net","yopmail.com","yopmail.fr","trashmail.com","trashmail.net","getnada.com","nada.email","throwawaymail.com","maildrop.cc","dispostable.com","fakeinbox.com","mailnesia.com","mintemail.com","spamgourmet.com","mytemp.email","tempinbox.com","emailondeck.com","burnermail.io","moakt.com","mohmal.com","inboxkitten.com","mailcatch.com","tmpmail.org","tmpmail.net","discard.email","spam4.me","grr.la","guerrillamailblock.com","33mail.com"]);
+
+const TYPOS = {
+  "gmial.com":"gmail.com","gmai.com":"gmail.com","gmail.con":"gmail.com","gmail.cm":"gmail.com","gmail.om":"gmail.com","gmail.comm":"gmail.com","gmail.co":"gmail.com","gmal.com":"gmail.com","gnail.com":"gmail.com","gamil.com":"gmail.com","gmaill.com":"gmail.com","gmail.vom":"gmail.com","gmail.cim":"gmail.com","gmail.clm":"gmail.com","gmali.com":"gmail.com","gimail.com":"gmail.com","gmaim.com":"gmail.com",
+  "hotmial.com":"hotmail.com","hotmal.com":"hotmail.com","hotmail.con":"hotmail.com","hotmail.cm":"hotmail.com","hotmai.com":"hotmail.com","hotmali.com":"hotmail.com","homail.com":"hotmail.com","hotmil.com":"hotmail.com",
+  "yaho.com":"yahoo.com","yahooo.com":"yahoo.com","yahoo.con":"yahoo.com","yahoo.cm":"yahoo.com","yhoo.com":"yahoo.com","yahho.com":"yahoo.com","yaoo.com":"yahoo.com","yahoo.comm":"yahoo.com",
+  "outlok.com":"outlook.com","outllook.com":"outlook.com","outlook.con":"outlook.com","outlook.cm":"outlook.com","outloook.com":"outlook.com","outlookk.com":"outlook.com","outook.com":"outlook.com",
+  "iclod.com":"icloud.com","iclould.com":"icloud.com","icloud.con":"icloud.com","icloud.cm":"icloud.com","icoud.com":"icloud.com","iclud.com":"icloud.com","icloude.com":"icloud.com"
+};
+
+const ROLES = new Set(["admin","administrator","info","contact","support","help","sales","billing","office","hello","team","noreply","no-reply","donotreply","do-not-reply","postmaster","webmaster","hostmaster","abuse","root","mail","marketing","hr","jobs","press","security","newsletter","enquiries","service"]);
+
+function validateEmail(raw) {
+  const checks = [];
+  const res = { input: String(raw).trim(), address: "", local: "", domain: "", verdict: "invalid", headline: "", suggestion: null, checks };
+  const add = (s, t) => checks.push({ s, t });
+  const fail = (headline) => { res.verdict = "invalid"; res.headline = headline; return res; };
+
+  let s = res.input.replace(/^mailto:/i, "");
+  const angle = s.match(/<([^<>]+)>\s*$/);
+  if (angle) s = angle[1].trim();
+  res.address = s;
+
+  if (!s) { add("fail", "Nothing to check."); return fail("Empty input."); }
+  if (/\s/.test(s)) { add("fail", "Contains a space. Addresses cannot have spaces."); return fail("Not a valid address."); }
+  if (s.length > 254) { add("fail", "Longer than 254 characters, the maximum allowed."); return fail("Not a valid address."); }
+
+  const parts = s.split("@");
+  if (parts.length < 2) { add("fail", "No @ sign. An address needs a name, an @, then a domain."); return fail("Not a valid address."); }
+  if (parts.length > 2) { add("fail", "More than one @ sign. There can be only one."); return fail("Not a valid address."); }
+  add("pass", "Has one @ sign.");
+
+  const local = parts[0];
+  let domain = parts[1];
+  res.local = local; res.domain = domain;
+
+  // local part
+  if (!local) { add("fail", "Nothing before the @."); return fail("Not a valid address."); }
+  if (local.length > 64) { add("fail", "The part before the @ is " + local.length + " characters. The maximum is 64."); return fail("Not a valid address."); }
+  if (/[^\x00-\x7F]/.test(local)) { add("fail", "The part before the @ has accented or non-Latin letters. Most mail servers reject them."); return fail("Not a valid address."); }
+  if (!/^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~.-]+$/.test(local)) {
+    const bad = [...new Set(local.replace(/[A-Za-z0-9!#$%&'*+\/=?^_`{|}~.-]/g, "").split(""))].join(" ");
+    add("fail", "The part before the @ has characters that are not allowed: " + bad); return fail("Not a valid address.");
+  }
+  if (local.startsWith(".") || local.endsWith(".")) { add("fail", "The part before the @ cannot start or end with a dot."); return fail("Not a valid address."); }
+  if (local.includes("..")) { add("fail", "The part before the @ has two dots in a row."); return fail("Not a valid address."); }
+  add("pass", "The part before the @ is well formed.");
+
+  // domain
+  if (!domain) { add("fail", "Nothing after the @."); return fail("Not a valid address."); }
+  if (domain.startsWith("[")) { add("fail", "Raw IP addresses as the domain are not accepted."); return fail("Not a valid address."); }
+  if (/[^\x00-\x7F]/.test(domain)) {
+    try { domain = new URL("http://" + domain).hostname; } catch (e) { add("fail", "The domain contains characters that cannot be converted to a valid domain name."); return fail("Not a valid address."); }
+  }
+  domain = domain.toLowerCase();
+  if (domain.endsWith(".") ) { add("fail", "The domain ends with a dot."); return fail("Not a valid address."); }
+  const labels = domain.split(".");
+  if (labels.length < 2) { add("fail", "The domain has no ending like .com. Real domains have at least two parts."); return fail("Not a valid address."); }
+  for (const l of labels) {
+    if (!l) { add("fail", "The domain has two dots in a row or starts with a dot."); return fail("Not a valid address."); }
+    if (l.length > 63) { add("fail", "A part of the domain is longer than 63 characters."); return fail("Not a valid address."); }
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(l)) { add("fail", "The domain part “" + l + "” has characters that are not allowed, or starts or ends with a hyphen."); return fail("Not a valid address."); }
+  }
+  const tld = labels[labels.length - 1];
+  if (!/^[a-z]{2,}$/.test(tld) && !/^xn--[a-z0-9-]+$/.test(tld)) { add("fail", "The domain ending “." + tld + "” is not valid. Endings are letters and at least two long."); return fail("Not a valid address."); }
+  add("pass", "The domain is well formed.");
+  res.domain = domain;
+
+  // reserved
+  if (RESERVED.has(domain) || RESERVED_TLD.includes(tld)) {
+    add("fail", "“" + domain + "” is reserved for examples and testing. It has no real inboxes.");
+    return fail("Not a real address.");
+  }
+
+  // typo of a big provider
+  if (TYPOS[domain]) {
+    add("fail", "“" + domain + "” looks like a misspelling of " + TYPOS[domain] + ".");
+    res.suggestion = local + "@" + TYPOS[domain];
+    return fail("Probably a typo.");
+  }
+
+  // Gmail's own rules
+  let warns = 0;
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    const base = local.split("+")[0];
+    if (base.length < 6) { add("fail", "Gmail usernames are at least 6 characters. This one has " + base.length + "."); return fail("Cannot exist on Gmail."); }
+    if (base.length > 30) { add("fail", "Gmail usernames are at most 30 characters. This one has " + base.length + "."); return fail("Cannot exist on Gmail."); }
+    if (!/^[A-Za-z0-9.]+$/.test(base)) { add("fail", "Gmail usernames only use letters, numbers and dots."); return fail("Cannot exist on Gmail."); }
+    add("pass", "Follows Gmail's username rules.");
+  }
+
+  // ending known?
+  if (CCTLD.has(tld) || GTLD.has(tld) || tld.startsWith("xn--")) add("pass", "The ending “." + tld + "” is a recognised domain ending.");
+  else { add("warn", "The ending “." + tld + "” is not one I recognise. It may be a newer ending."); warns++; }
+
+  // disposable
+  const registrable = labels.slice(-2).join(".");
+  if (DISPOSABLE.has(domain) || DISPOSABLE.has(registrable)) { add("warn", "“" + registrable + "” is a throwaway inbox service. The address works briefly, then disappears."); warns++; }
+  else add("pass", "Not a known throwaway-inbox domain.");
+
+  // role account
+  if (ROLES.has(local.toLowerCase())) { add("warn", "“" + local + "” is a shared role address, not a person. Often unmonitored."); warns++; }
+
+  if (warns) { res.verdict = "warn"; res.headline = "Valid format, but check the warnings."; }
+  else { res.verdict = "valid"; res.headline = "Looks real."; }
+  return res;
+}
+
+function splitInput(text) {
+  const out = [];
+  for (const line of String(text).split(/[\n,;]+/)) {
+    const t = line.trim();
+    if (!t) continue;
+    if (!t.includes("<") && /\s/.test(t) && t.split(/\s+/).every(p => p.includes("@"))) out.push(...t.split(/\s+/));
+    else out.push(t);
+  }
+  return out;
+}
+
+async function dohQuery(name, type) {
+  const r = await fetch("https://cloudflare-dns.com/dns-query?name=" + encodeURIComponent(name) + "&type=" + type, { headers: { accept: "application/dns-json" } });
+  if (!r.ok) throw new Error("http " + r.status);
+  return r.json();
+}
+
+// Asks DNS whether the domain exists and which servers take its mail.
+async function lookupDomain(domain) {
+  try {
+    const mx = await dohQuery(domain, "MX");
+    if (mx.Status === 3) return { state: "nxdomain" };
+    const recs = (mx.Answer || []).filter(a => a.type === 15).map(a => {
+      const p = a.data.split(" ");
+      return { pri: parseInt(p[0], 10), host: (p[1] || "").replace(/\.$/, "") };
+    }).sort((a, b) => a.pri - b.pri);
+    if (recs.length) {
+      if (recs.length === 1 && recs[0].host === "") return { state: "nullmx" };
+      return { state: "mx", hosts: recs.map(r => r.host) };
+    }
+    if (mx.Status !== 0) return { state: "error" };
+    const [a, aaaa] = await Promise.all([dohQuery(domain, "A"), dohQuery(domain, "AAAA")]);
+    const has = [a, aaaa].some(x => (x.Answer || []).some(z => z.type === 1 || z.type === 28));
+    return { state: has ? "a" : "nomail" };
+  } catch (e) { return { state: "error" }; }
+}
+
+function providerOf(hosts) {
+  const h = hosts.join(" ").toLowerCase();
+  if (/google\.com|googlemail\.com/.test(h)) return "Google Workspace / Gmail";
+  if (/outlook\.com|protection\.outlook|hotmail/.test(h)) return "Microsoft 365 / Outlook";
+  if (/yahoodns|yahoo\.com/.test(h)) return "Yahoo Mail";
+  if (/icloud\.com|apple\.com/.test(h)) return "iCloud Mail";
+  if (/protonmail|proton\.ch/.test(h)) return "Proton Mail";
+  if (/zoho\./.test(h)) return "Zoho Mail";
+  if (/mimecast|pphosted|barracuda/.test(h)) return "a company mail filter";
+  return null;
+}
+
+// Returns a copy of a format-valid result with the mail-server answer folded in.
+function applyDns(res, dns) {
+  const r = Object.assign({}, res, { checks: res.checks.slice() });
+  const d = res.domain;
+  const add = (s, t) => r.checks.push({ s, t });
+  if (dns.state === "nxdomain") { add("fail", "The domain “" + d + "” does not exist."); r.verdict = "invalid"; r.headline = "This domain does not exist."; }
+  else if (dns.state === "nullmx") { add("fail", "“" + d + "” says it accepts no email at all."); r.verdict = "invalid"; r.headline = "This domain cannot receive email."; }
+  else if (dns.state === "nomail") { add("fail", "“" + d + "” exists but has no mail servers."); r.verdict = "invalid"; r.headline = "This domain cannot receive email."; }
+  else if (dns.state === "mx") {
+    const prov = providerOf(dns.hosts);
+    const shown = dns.hosts.slice(0, 3).join(", ") + (dns.hosts.length > 3 ? " and " + (dns.hosts.length - 3) + " more" : "");
+    add("pass", "Mail servers found" + (prov ? " (" + prov + ")" : "") + ": " + shown + ".");
+    if (r.verdict === "valid") r.headline = "Looks real. The domain accepts email.";
+  }
+  else if (dns.state === "a") {
+    add("warn", "No mail servers are listed. Mail would go to the website's own server, which rarely accepts it.");
+    if (r.verdict === "valid") { r.verdict = "warn"; r.headline = "Valid format, but check the warnings."; }
+  }
+  else { add("warn", "Could not reach the mail-server lookup. The format checks above still apply."); if (r.verdict === "valid") { r.verdict = "warn"; r.headline = "Valid format, but the domain was not checked."; } }
+  return r;
+}
+</script>
+
+<script id="ui">
+(function () {
+  const $in = document.getElementById("in");
+  const $res = document.getElementById("results");
+  const $count = document.getElementById("count");
+  const LABEL = { valid: "Looks real", warn: "Check warnings", invalid: "Not real", pending: "Checking\u2026" };
+  const cache = new Map();
+  const timers = new Map();
+  const MAX_ITEMS = 50;
+  const ICON = { pass: "\u2713", warn: "!", fail: "\u2715", pending: "\u2026" };
+
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function render() {
+    const items = splitInput($in.value).slice(0, MAX_ITEMS);
+    $res.replaceChildren();
+    if (!items.length) { $count.textContent = ""; $res.appendChild(el("p", "lede", "Paste an address above to check it.")); return; }
+    const results = items.map(validateEmail).map(r => {
+      if (r.verdict === "invalid" || !r.domain) return r;
+      const dns = cache.get(r.domain);
+      if (dns) return applyDns(r, dns);
+      ensureLookup(r.domain);
+      return Object.assign({}, r, { verdict: "pending", headline: "Checking the domain\u2019s mail servers\u2026", checks: r.checks.concat([{ s: "pending", t: "Looking up mail servers\u2026" }]) });
+    });
+    const n = results.filter(r => r.verdict === "valid").length;
+    const waiting = results.some(r => r.verdict === "pending");
+    $count.textContent = items.length === 1 ? "" : (waiting ? "Checking\u2026 " : "") + n + " of " + items.length + " look real";
+    for (const r of results) {
+      const card = el("div", "card");
+      const head = el("div", "head");
+      const addr = el("div", "addr");
+      if (r.local && r.domain && r.address.includes("@")) {
+        addr.append(el("span", "loc", r.local), el("span", "at", "@"), el("span", "dom", r.domain));
+      } else addr.textContent = r.address || r.input;
+      head.append(addr, el("span", "pill " + r.verdict, LABEL[r.verdict]));
+      card.append(head, el("p", "headline", r.headline));
+      const ul = el("ul", "checks");
+      for (const c of r.checks) {
+        const li = el("li", c.s);
+        li.append(el("span", "ic", ICON[c.s]), el("span", "", c.t));
+        ul.appendChild(li);
+      }
+      card.appendChild(ul);
+      if (r.suggestion) {
+        const sg = el("div", "suggest", "Did you mean");
+        const b = el("button", "", r.suggestion); b.type = "button";
+        b.addEventListener("click", () => {
+          $in.value = $in.value.replace(r.input, r.suggestion);
+          render();
+        });
+        sg.append(b, document.createTextNode("?"));
+        card.appendChild(sg);
+      }
+      $res.appendChild(card);
+    }
+  }
+  function ensureLookup(domain) {
+    if (cache.has(domain) || timers.has(domain)) return;
+    timers.set(domain, setTimeout(async () => {
+      timers.delete(domain);
+      const still = splitInput($in.value).slice(0, MAX_ITEMS).some(t => validateEmail(t).domain === domain);
+      if (!still) return;
+      const dns = await lookupDomain(domain);
+      cache.set(domain, dns);
+      if (dns.state === "error") setTimeout(() => cache.delete(domain), 5000);
+      render();
+    }, 350));
+  }
+  $in.addEventListener("input", render);
+  $in.addEventListener("paste", () => setTimeout(render, 0));
+  document.getElementById("clear").addEventListener("click", () => { $in.value = ""; render(); $in.focus(); });
+  render();
+})();
+</script>
+
+</body>
+</html>
