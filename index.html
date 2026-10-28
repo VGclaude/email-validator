@@ -111,9 +111,10 @@ deals@mailinator.com</textarea>
 
   <section id="results" aria-live="polite"></section>
 
-  <p class="note"><strong>What this checks.</strong> Spelling rules from the email standard, common typos of big providers, throwaway-inbox services, Gmail's own username rules, and whether the domain exists and has mail servers. <strong>What it cannot check.</strong> Whether that particular mailbox exists, or whether the domain accepts every address (a catch-all). That needs a direct connection to the mail server, which a web page cannot make. Only the domain name, never the part before the @, is sent to Cloudflare's public DNS to look up mail servers.</p>
+  <p class="note"><span id="note-text"></span></p>
 </main>
 
+<script src="config.js"></script>
 <script id="logic">
 const CCTLD = new Set(("ac ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo br bs bt bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg er es et eu fi fj fk fm fo fr ga gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st su sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug uk us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw").split(" "));
 const GTLD = new Set(("com net org edu gov mil int info biz name pro mobi asia tel travel jobs museum coop aero cat app dev ai online site tech store shop blog cloud email xyz club live news world today space website link page art design studio agency digital network solutions systems services group media global life love fun bio health care money bank finance capital ventures company inc llc ltd team works zone center city academy education school university college software tools expert guru ninja rocks band wiki games game video photo photos pics music radio church press report review reviews social chat community forum events party fund law legal tax work jobs careers support help host hosting domains website pizza coffee restaurant bar cafe hotel flights vacations travel fit fitness yoga run golf fish farm garden house homes land realty properties estate auction cars car bike auto taxi tours guide directory market marketplace express delivery supply parts industries international holdings partners foundation charity ngo ong gmbh").split(" "));
@@ -278,9 +279,41 @@ function providerOf(hosts) {
   return null;
 }
 
+// Asks the verification server to check the mailbox over SMTP. Takes up to about a minute when a server defers.
+async function lookupMailbox(email) {
+  const api = String(window.ADDRESS_CHECK_API || "").replace(/\/+$/, "");
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 70000);
+  try {
+    const r = await fetch(api + "/verify?email=" + encodeURIComponent(email), { signal: ctl.signal });
+    const j = await r.json();
+    if (!r.ok) return { error: j.error || ("server answered " + r.status) };
+    return j;
+  } catch (e) { return { error: "the verification server did not answer" }; }
+  finally { clearTimeout(timer); }
+}
+
+// Folds the server's mailbox answer into a result that already has the domain answer.
+function applyMailbox(res, m) {
+  const x = Object.assign({}, res, { checks: res.checks.slice(), recovered: (m && m.recovered) || [] });
+  if (!m || m.error) { x.checks.push({ s: "warn", t: "Mailbox check unavailable: " + (m && m.error ? m.error : "no answer") + "." }); return x; }
+  for (const c of (m.checks || []).slice(1)) x.checks.push(c);
+  if (m.verdict === "deliverable") {
+    x.label = "Deliverable"; x.headline = "The mail server confirmed this mailbox exists.";
+    if (res.verdict === "valid" && m.trap_risk) x.verdict = "warn"; else if (res.verdict === "warn") x.headline = "The mailbox exists, but check the warnings.";
+  } else if (m.verdict === "risky") {
+    x.label = "Risky"; x.verdict = "warn"; x.headline = "Catch-all domain. This mailbox cannot be confirmed.";
+  } else if (m.verdict === "invalid") {
+    x.verdict = "invalid"; x.label = "Not real"; x.headline = "The mail server says this mailbox does not exist.";
+  } else if (res.verdict === "valid") {
+    x.verdict = "warn"; x.label = "Unconfirmed"; x.headline = "The domain is real, but the mail server would not confirm this mailbox.";
+  }
+  return x;
+}
+
 // Returns a copy of a format-valid result with the mail-server answer folded in.
 function applyDns(res, dns) {
-  const r = Object.assign({}, res, { checks: res.checks.slice() });
+  const r = Object.assign({}, res, { checks: res.checks.slice(), dnsState: dns.state });
   const d = res.domain;
   const add = (s, t) => r.checks.push({ s, t });
   if (dns.state === "nxdomain") { add("fail", "The domain “" + d + "” does not exist."); r.verdict = "invalid"; r.headline = "This domain does not exist."; }
@@ -308,6 +341,9 @@ function applyDns(res, dns) {
   const $count = document.getElementById("count");
   const LABEL = { valid: "Domain OK", warn: "Check warnings", invalid: "Not real", pending: "Checking\u2026" };
   const cache = new Map();
+  const mbCache = new Map();
+  const mbTimers = new Map();
+  const API = String(window.ADDRESS_CHECK_API || "");
   const timers = new Map();
   const MAX_ITEMS = 50;
   const ICON = { pass: "\u2713", warn: "!", fail: "\u2715", pending: "\u2026" };
@@ -321,13 +357,21 @@ function applyDns(res, dns) {
     const results = items.map(validateEmail).map(r => {
       if (r.verdict === "invalid" || !r.domain) return r;
       const dns = cache.get(r.domain);
-      if (dns) return applyDns(r, dns);
+      if (dns) {
+        const d = applyDns(r, dns);
+        if (!API || d.verdict === "invalid" || d.dnsState !== "mx") return d;
+        const key = r.address.toLowerCase();
+        const mb = mbCache.get(key);
+        if (mb) return applyMailbox(d, mb);
+        ensureMailbox(r.address);
+        return Object.assign({}, d, { verdict: "pending", headline: "Asking the mail server if this mailbox exists\u2026", checks: d.checks.concat([{ s: "pending", t: "Contacting the mail server. Some servers take up to a minute." }]) });
+      }
       ensureLookup(r.domain);
       return Object.assign({}, r, { verdict: "pending", headline: "Checking the domain\u2019s mail servers\u2026", checks: r.checks.concat([{ s: "pending", t: "Looking up mail servers\u2026" }]) });
     });
     const n = results.filter(r => r.verdict === "valid").length;
     const waiting = results.some(r => r.verdict === "pending");
-    $count.textContent = items.length === 1 ? "" : (waiting ? "Checking\u2026 " : "") + n + " of " + items.length + " have a working domain";
+    $count.textContent = items.length === 1 ? "" : (waiting ? "Checking\u2026 " : "") + n + " of " + items.length + (API ? " deliverable" : " have a working domain");
     for (const r of results) {
       const card = el("div", "card");
       const head = el("div", "head");
@@ -335,7 +379,7 @@ function applyDns(res, dns) {
       if (r.local && r.domain && r.address.includes("@")) {
         addr.append(el("span", "loc", r.local), el("span", "at", "@"), el("span", "dom", r.domain));
       } else addr.textContent = r.address || r.input;
-      head.append(addr, el("span", "pill " + r.verdict, LABEL[r.verdict]));
+      head.append(addr, el("span", "pill " + r.verdict, r.label || LABEL[r.verdict]));
       card.append(head, el("p", "headline", r.headline));
       const ul = el("ul", "checks");
       for (const c of r.checks) {
@@ -344,14 +388,15 @@ function applyDns(res, dns) {
         ul.appendChild(li);
       }
       card.appendChild(ul);
-      if (r.suggestion) {
+      const sugg = [r.suggestion].concat(r.recovered || []).filter(Boolean);
+      if (sugg.length) {
         const sg = el("div", "suggest", "Did you mean");
-        const b = el("button", "", r.suggestion); b.type = "button";
-        b.addEventListener("click", () => {
-          $in.value = $in.value.replace(r.input, r.suggestion);
-          render();
-        });
-        sg.append(b, document.createTextNode("?"));
+        for (const s of sugg) {
+          const b = el("button", "", s); b.type = "button";
+          b.addEventListener("click", () => { $in.value = $in.value.replace(r.input, s); render(); });
+          sg.appendChild(b);
+        }
+        sg.appendChild(document.createTextNode("?"));
         card.appendChild(sg);
       }
       $res.appendChild(card);
@@ -369,9 +414,25 @@ function applyDns(res, dns) {
       render();
     }, 350));
   }
+  function ensureMailbox(email) {
+    const key = email.toLowerCase();
+    if (mbCache.has(key) || mbTimers.has(key)) return;
+    mbTimers.set(key, setTimeout(async () => {
+      const still = splitInput($in.value).slice(0, MAX_ITEMS).some(t => validateEmail(t).address.toLowerCase() === key);
+      if (!still) { mbTimers.delete(key); return; }
+      const m = await lookupMailbox(email);
+      mbTimers.delete(key);
+      mbCache.set(key, m);
+      if (m.error || m.verdict === "unknown") setTimeout(() => mbCache.delete(key), 30000);
+      render();
+    }, 700));
+  }
   $in.addEventListener("input", render);
   $in.addEventListener("paste", () => setTimeout(render, 0));
   document.getElementById("clear").addEventListener("click", () => { $in.value = ""; render(); $in.focus(); });
+  document.getElementById("note-text").innerHTML = API
+    ? "<strong>What this checks.</strong> Spelling rules, common typos, throwaway inboxes, Gmail's username rules, the domain's mail servers, and then the mailbox itself: our server asks the recipient's mail server whether it would accept the address, without sending any message. Catch-all domains accept everything, so those can only be marked risky. Large providers sometimes refuse to answer, which shows as unconfirmed. <strong>Privacy.</strong> The full address is sent to the verification server, and its domain to Cloudflare's public DNS."
+    : "<strong>What this checks.</strong> Spelling rules, common typos, throwaway inboxes, Gmail's username rules, and whether the domain exists and has mail servers. <strong>What it cannot check.</strong> Whether that mailbox exists, or whether the domain is a catch-all. That needs the verification server, which is not connected. Only the domain, never the part before the @, is sent to Cloudflare's public DNS.";
   render();
 })();
 </script>
